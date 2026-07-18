@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# MK-Hermes-Agent deploy — pull latest config templates and apply to live profiles,
+# preserving user data (state, sessions, memories). Backs up the previous config.yaml
+# before overwriting it; never deletes anything.
+set -euo pipefail
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+echo "Pulling latest from origin/main..."
+git -C "$REPO_DIR" pull --ff-only
+
+for p in personal hp business; do
+  SRC="$REPO_DIR/profiles/$p/config.yaml"
+  DEST="$HOME/.hermes/profiles/$p/config.yaml"
+  [ -f "$SRC" ] || continue
+  if [ -f "$DEST" ] && ! diff -q "$SRC" "$DEST" >/dev/null 2>&1; then
+    STAMP="$(date +%Y%m%d_%H%M%S)"
+    echo "Updating $DEST (backup: $DEST.bak.$STAMP)"
+    cp "$DEST" "$DEST.bak.$STAMP"
+    cp "$SRC" "$DEST"
+  fi
+done
+
+echo "Deploy complete. Run scripts/verify to confirm."

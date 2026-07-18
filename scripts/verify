@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# MK-Hermes-Agent fleet verification.
+# Usage: MACHINE_ROLE=workstation|imac|vps MEM0_HOST=http://<host>:<port> scripts/verify
+set -uo pipefail
+
+ROLE="${MACHINE_ROLE:-}"
+FAIL=0
+
+pass() { printf '  \033[32m\xe2\x9c\x93\033[0m %s\n' "$1"; }
+fail() { printf '  \033[31m\xe2\x9c\x97\033[0m %s\n' "$1"; FAIL=1; }
+note() { printf '  \xc2\xb7 %s\n' "$1"; }
+
+echo "== Hermes CLI =="
+if command -v hermes >/dev/null 2>&1; then
+  pass "hermes CLI found: $(hermes --version 2>&1 | head -1)"
+else
+  fail "hermes CLI not found on PATH"
+  exit 1
+fi
+
+echo "== Profile list =="
+PROFILE_OUT="$(hermes profile list 2>&1)"
+for p in personal hp business; do
+  if echo "$PROFILE_OUT" | grep -qi "\b$p\b"; then
+    pass "profile '$p' present"
+  else
+    fail "profile '$p' NOT found in 'hermes profile list'"
+  fi
+done
+if echo "$PROFILE_OUT" | grep -qi '\bdefault\b'; then
+  note "'default' still listed by the CLI — expected: retired-by-convention (never active, never gatewayed, no cron). See Constitution §4 and docs/ARCHITECTURE.md."
+fi
+
+echo "== Active profile =="
+ACTIVE="$(cat "$HOME/.hermes/active_profile" 2>/dev/null || echo '?')"
+if [ "$ACTIVE" = "default" ]; then
+  fail "active_profile is 'default' — should never be default"
+else
+  pass "active_profile = $ACTIVE"
+fi
+
+echo "== Gateway state vs machine role =="
+GATEWAY_STATUS="$(hermes gateway status 2>&1)"
+if [ -z "$ROLE" ]; then
+  note "MACHINE_ROLE not set (workstation|imac|vps) — printing raw status instead of asserting"
+  note "$(echo "$GATEWAY_STATUS" | head -1)"
+else
+  case "$ROLE" in
+    workstation|imac)
+      if echo "$GATEWAY_STATUS" | grep -qiE "not (loaded|supervised|running)|stopped"; then
+        pass "gateway not running (expected for $ROLE — interactive-only)"
+      else
+        fail "gateway appears to be running on $ROLE — should be interactive-only"
+      fi
+      ;;
+    vps)
+      if echo "$GATEWAY_STATUS" | grep -qiE "not (loaded|supervised|running)"; then
+        fail "gateway NOT running on vps — it should be the sole Telegram gateway"
+      else
+        pass "gateway running (expected for vps — sole Telegram gateway)"
+      fi
+      ;;
+    *)
+      fail "unrecognized MACHINE_ROLE '$ROLE' (expected workstation|imac|vps)"
+      ;;
+  esac
+fi
+
+echo "== Mem0 reachable =="
+if [ -n "${MEM0_HOST:-}" ]; then
+  if curl -fsS --max-time 5 "$MEM0_HOST/health" >/dev/null 2>&1 || curl -fsS --max-time 5 "$MEM0_HOST" >/dev/null 2>&1; then
+    pass "Mem0 reachable at $MEM0_HOST"
+  else
+    fail "Mem0 NOT reachable at $MEM0_HOST"
+  fi
+else
+  note "MEM0_HOST not set — export MEM0_HOST=http://<tailscale-host>:<port> to check reachability once the central instance (Constitution §5) exists"
+fi
+
+echo "== Vault path =="
+VAULT="${MK_VAULT_PATH:-$HOME/Obsidian Vaults/Master 2.0}"
+if [ -d "$VAULT/_system" ] && [ -f "$VAULT/_system/MK Personal OS Constitution.md" ]; then
+  pass "vault found at: $VAULT"
+else
+  fail "vault not found or missing _system/MK Personal OS Constitution.md at: $VAULT"
+fi
+
+echo
+if [ "$FAIL" -eq 0 ]; then
+  echo "All checks passed."
+else
+  echo "One or more checks FAILED — see above."
+fi
+exit "$FAIL"

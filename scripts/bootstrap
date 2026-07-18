@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# MK-Hermes-Agent bootstrap — set up the 3-profile Hermes config on a new/reset machine.
+# Usage: scripts/bootstrap [personal|hp|business|all]
+set -euo pipefail
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TARGETS="${1:-all}"
+[ "$TARGETS" = "all" ] && TARGETS="personal hp business"
+
+if ! command -v hermes >/dev/null 2>&1; then
+  echo "hermes CLI not found on PATH. Install Hermes Agent first." >&2
+  exit 1
+fi
+
+for p in $TARGETS; do
+  DEST="$HOME/.hermes/profiles/$p"
+  SRC="$REPO_DIR/profiles/$p/config.yaml"
+  if [ ! -f "$SRC" ]; then
+    echo "No template for profile '$p' at $SRC" >&2
+    continue
+  fi
+
+  if [ ! -d "$DEST" ]; then
+    echo "Creating profile '$p'..."
+    hermes profile create "$p"
+  fi
+
+  echo "Applying config template for '$p' -> $DEST/config.yaml"
+  cp "$SRC" "$DEST/config.yaml"
+
+  if [ ! -f "$DEST/.env" ]; then
+    echo "  NOTE: $DEST/.env does not exist yet. Create it with the required API keys — never commit it." >&2
+  fi
+done
+
+echo "Bootstrap complete. Run scripts/verify next."
