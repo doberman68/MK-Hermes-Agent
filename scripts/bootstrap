@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # MK-Hermes-Agent bootstrap — set up the 3-profile Hermes config on a new/reset machine.
 # Usage: scripts/bootstrap [personal|hp|business|all]
+#
+# What it does per profile:
+#   1. Creates the profile if missing (hermes profile create).
+#   2. Applies the secret-free config.yaml template — BACKING UP any existing
+#      config.yaml first (never clobber live config without a copy).
+#   3. Provisions mem0.json from profiles/mem0.json.template, substituting the
+#      machine + profile into agent_id (hermes-<machine>-<profile>). Secrets are
+#      left as __GOOGLE_API_KEY__ / __PG_PASSWORD__ placeholders unless the
+#      matching env vars are exported — this file is chmod 600 and NEVER committed.
+#   4. Ensures active_profile is 'personal', never 'default' (default is retired;
+#      see Constitution §4).
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGETS="${1:-all}"
@@ -10,6 +21,11 @@ if ! command -v hermes >/dev/null 2>&1; then
   echo "hermes CLI not found on PATH. Install Hermes Agent first." >&2
   exit 1
 fi
+
+# Short, lowercased machine id for agent_id (e.g. m1, m3, imac-pro).
+MACHINE="$(scutil --get ComputerName 2>/dev/null || hostname -s)"
+MACHINE="$(printf '%s' "$MACHINE" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')"
+MEM0_TEMPLATE="$REPO_DIR/profiles/mem0.json.template"
 
 for p in $TARGETS; do
   DEST="$HOME/.hermes/profiles/$p"
@@ -24,12 +40,38 @@ for p in $TARGETS; do
     hermes profile create "$p"
   fi
 
+  # 2. config.yaml — back up before overwriting a live, differing config.
+  if [ -f "$DEST/config.yaml" ] && ! diff -q "$SRC" "$DEST/config.yaml" >/dev/null 2>&1; then
+    STAMP="$(date +%Y%m%d_%H%M%S)"
+    cp "$DEST/config.yaml" "$DEST/config.yaml.bak.$STAMP"
+    echo "Backed up existing $p config.yaml -> config.yaml.bak.$STAMP"
+  fi
   echo "Applying config template for '$p' -> $DEST/config.yaml"
   cp "$SRC" "$DEST/config.yaml"
+
+  # 3. mem0.json — provision from template if missing (central pgvector store).
+  if [ -f "$MEM0_TEMPLATE" ] && [ ! -f "$DEST/mem0.json" ]; then
+    sed -e "s/__MACHINE__/$MACHINE/g" -e "s/__PROFILE__/$p/g" \
+        -e "s/__GOOGLE_API_KEY__/${GOOGLE_API_KEY:-__GOOGLE_API_KEY__}/g" \
+        -e "s/__PG_PASSWORD__/${PG_PASSWORD:-__PG_PASSWORD__}/g" \
+        "$MEM0_TEMPLATE" > "$DEST/mem0.json"
+    chmod 600 "$DEST/mem0.json"
+    echo "Provisioned $p mem0.json (agent_id=hermes-$MACHINE-$p)"
+    if grep -q '__GOOGLE_API_KEY__\|__PG_PASSWORD__' "$DEST/mem0.json"; then
+      echo "  NOTE: fill secret placeholders in $DEST/mem0.json (export GOOGLE_API_KEY / PG_PASSWORD before re-running to auto-fill). NEVER commit this file." >&2
+    fi
+  fi
 
   if [ ! -f "$DEST/.env" ]; then
     echo "  NOTE: $DEST/.env does not exist yet. Create it with the required API keys — never commit it." >&2
   fi
 done
+
+# 4. active_profile must never be 'default' (Constitution §4 — default is retired).
+ACTIVE_FILE="$HOME/.hermes/active_profile"
+if [ ! -f "$ACTIVE_FILE" ] || [ "$(cat "$ACTIVE_FILE" 2>/dev/null)" = "default" ]; then
+  printf 'personal' > "$ACTIVE_FILE"
+  echo "Set active_profile = personal (default is retired)."
+fi
 
 echo "Bootstrap complete. Run scripts/verify next."

@@ -66,6 +66,21 @@ else
   esac
 fi
 
+echo "== Mem0 per-profile config (central pgvector store) =="
+for p in personal hp business; do
+  MJ="$HOME/.hermes/profiles/$p/mem0.json"
+  if [ ! -f "$MJ" ]; then
+    fail "profile '$p' has no mem0.json (central Mem0 not configured — see Constitution §5)"
+  elif grep -q '"provider": *"pgvector"' "$MJ" && grep -q '__PG_PASSWORD__\|__GOOGLE_API_KEY__' "$MJ"; then
+    fail "profile '$p' mem0.json still has unfilled secret placeholders"
+  elif grep -q '"provider": *"pgvector"' "$MJ"; then
+    AID="$(grep -oE '"agent_id" *: *"[^"]*"' "$MJ" | head -1 | sed -E 's/.*"agent_id" *: *"([^"]*)".*/\1/')"
+    pass "profile '$p' mem0.json -> pgvector (agent_id=$AID)"
+  else
+    note "profile '$p' mem0.json present but not pgvector (mode may be cloud/oss-other)"
+  fi
+done
+
 echo "== Mem0 reachable =="
 if [ -n "${MEM0_HOST:-}" ]; then
   if curl -fsS --max-time 5 "$MEM0_HOST/health" >/dev/null 2>&1 || curl -fsS --max-time 5 "$MEM0_HOST" >/dev/null 2>&1; then
