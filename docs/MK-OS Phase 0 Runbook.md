@@ -142,9 +142,11 @@ RULES:
 
 ## Section D — Fleet verification (run last, from the M1)
 
+> **✅ PHASE 0 CLOSED — 2026-07-19.** All Section D items green; authoritative record + full history in the Constitution `_system/` changelog (v1.14). Item 1 (VPS = sole webhook gateway, `getWebhookInfo` no `last_error`) and the behavioral watchdog (item 9) went green after the VPS-ownership session: the VPS stack is now version-controlled + digest-pinned in `vps/`. Live round-trip on **@Hermes_MK68_bot** confirmed by Murat.
+
 Run `scripts/verify` (built in A4) against every node, or check manually:
 
-- [ ] Exactly one Telegram gateway responds (VPS). M1/iMac gateways off.
+- [x] Exactly one Telegram gateway responds (VPS, webhook mode). M1/M3/iMac gateways off.
 - [ ] All machines: 3 profiles (`personal`, `hp`, `business`); `default` retired everywhere.
 - [ ] All profiles on all machines report the SAME Mem0 endpoint (VPS) and user ID.
 - [ ] Memory round-trip: store a fact from the M1 `personal` profile, recall it from Telegram (VPS). Store from iMac, recall from M1.
