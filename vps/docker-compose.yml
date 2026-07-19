@@ -1,0 +1,52 @@
+# MK-OS Hostinger VPS — Hermes gateway (sole Telegram gateway, webhook mode) + central Mem0.
+# VERSION-CONTROLLED so Hostinger's :latest can never silently mutate this deployment.
+#
+#   - image pinned by DIGEST (never :latest). Bump deliberately + test, then commit.
+#   - entrypoint is OUR script (vps/mkos-entrypoint.sh -> /opt/data/mkos-entrypoint.sh):
+#     self-heals venv deps, asserts OUR model config, then launches the gateway.
+#   - webhook host/path + all secrets live in .env ONLY (see vps/.env.example). Never commit .env.
+#   - healthcheck probes the webhook server (:8443) so `docker ps` shows real liveness;
+#     active recovery on wedge is done by the host watchdog (vps/telegram-watchdog.sh).
+#
+# Deploy dir MUST stay /docker/hermes-agent-bfcq so COMPOSE_PROJECT_NAME + volume names are unchanged.
+services:
+  hermes-agent:
+    image: ghcr.io/hostinger/hvps-hermes-agent@sha256:8bf68cad92c236d6ed0760c1cc268449aad781922277c7d7c994b40ba16a9fd6
+    entrypoint: ["/bin/zsh", "/opt/data/mkos-entrypoint.sh"]
+    restart: unless-stopped
+    ports:
+      - "4860"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${COMPOSE_PROJECT_NAME}.${TRAEFIK_HOST}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls.certresolver=letsencrypt
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.service=${COMPOSE_PROJECT_NAME}
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=4860
+      - traefik.http.routers.hermes-agent-bfcq-webhook.rule=Host(`${WEBHOOK_HOST}`) && PathPrefix(`${TG_WEBHOOK_PATH}`)
+      - traefik.http.routers.hermes-agent-bfcq-webhook.entrypoints=websecure
+      - traefik.http.routers.hermes-agent-bfcq-webhook.tls.certresolver=letsencrypt
+      - traefik.http.routers.hermes-agent-bfcq-webhook.priority=100
+      - traefik.http.routers.hermes-agent-bfcq-webhook.service=hermes-agent-bfcq-webhook
+      - traefik.http.routers.hermes-agent-bfcq-webhook.middlewares=hermes-agent-bfcq-tgips
+      - traefik.http.services.hermes-agent-bfcq-webhook.loadbalancer.server.port=8443
+      - traefik.http.middlewares.hermes-agent-bfcq-tgips.ipallowlist.sourcerange=149.154.160.0/20,91.108.4.0/22
+    env_file:
+      - .env
+    environment:
+      - TZ=America/New_York
+      - HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
+      - TELEGRAM_FALLBACK_IPS=149.154.166.110,149.154.167.220
+      - TELEGRAM_WEBHOOK_URL=https://${WEBHOOK_HOST}${TG_WEBHOOK_PATH}
+      - TELEGRAM_WEBHOOK_PORT=8443
+    extra_hosts:
+      - "api.telegram.org:149.154.166.110"
+    healthcheck:
+      # Webhook server listening on :8443 == gateway is up in webhook mode.
+      test: ["CMD", "/opt/hermes/.venv/bin/python3", "-c", "import socket,sys; s=socket.socket(); s.settimeout(3); sys.exit(0 if s.connect_ex(('127.0.0.1',8443))==0 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 150s
+    volumes:
+      - ./data:/opt/data

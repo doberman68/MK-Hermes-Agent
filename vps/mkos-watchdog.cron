@@ -1,0 +1,5 @@
+# MK-OS VPS Hermes gateway resilience — deploy to /etc/cron.d/mkos-watchdog
+# webhook-keeper: re-assert the webhook within <=60s of any restart-window drop (deterministic registration).
+* * * * * root /opt/mkos-watchdog/webhook-keeper.sh >/dev/null 2>&1
+# watchdog: behavioral health probe (real webhook delivery) + auto-recovery every 5 min.
+*/5 * * * * root /opt/mkos-watchdog/telegram-watchdog.sh >/dev/null 2>&1
