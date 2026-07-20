@@ -5,7 +5,11 @@
 # via docker-compose.yml. It applies durability + determinism fixes, then hands off to the
 # image's own /entrypoint.sh (which launches `hermes gateway run` in webhook mode):
 #
-#   1) Reinstall Mem0 pgvector + Gemini deps if a recreate wiped the sealed venv.
+#   1) Verify Mem0 pgvector + Gemini deps (psycopg, google-genai) are present. As of the
+#      vps/Dockerfile build, these are baked into the image at build time, so this is a
+#      fast no-op in normal operation — kept as belt-and-suspenders in case a future image
+#      swap or manual `docker exec` ever wipes them, so the gateway self-heals instead of
+#      silently running without Mem0 rather than hard-failing.
 #   2) ASSERT our model config every boot — deterministically overriding any image drift
 #      (e.g. the stock image's nexos.ai injection). OUR model is the version-controlled choice.
 #   3) Wait out any prior Telegram getUpdates session so the first poll (if ever polling) is
@@ -20,11 +24,13 @@ log() { echo "[mkos-preflight $(date -u +%Y-%m-%dT%H:%M:%SZ)] $1" >> "$LOG" 2>&1
 VENV=/opt/hermes/.venv
 export UV_CACHE_DIR=/tmp/uvcache
 # The venv is root-owned ("sealed") and has no pip; uv installs into it as root.
-log "ensuring venv deps (psycopg[binary,pool], google-genai)"
+# Normally a no-op — vps/Dockerfile bakes these in at build time. This check only
+# does real work if something wiped them after the image was built.
+log "checking venv deps (psycopg[binary,pool], google-genai) — should be baked into the image"
 if "$VENV/bin/python" -c "import psycopg, google.genai" 2>/dev/null; then
-  log "venv deps already present"
+  log "venv deps present (image build baked them in, as expected)"
 else
-  log "deps missing (fresh image/recreate) — installing via uv as root"
+  log "deps missing (unexpected — image build should have baked them in) — self-healing via uv as root"
   uv pip install --python "$VENV/bin/python" "psycopg[binary,pool]" google-genai \
     >> /opt/data/logs/mkos-preflight.log 2>&1 && log "deps installed" || log "dep install FAILED (non-fatal, continuing)"
 fi

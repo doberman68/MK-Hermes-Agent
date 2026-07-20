@@ -1,9 +1,14 @@
 # MK-OS Hostinger VPS — Hermes gateway (sole Telegram gateway, webhook mode) + central Mem0.
 # VERSION-CONTROLLED so Hostinger's :latest can never silently mutate this deployment.
 #
-#   - image pinned by DIGEST (never :latest). Bump deliberately + test, then commit.
+#   - image BUILT from vps/Dockerfile, which pins the base by DIGEST (never :latest) and
+#     bakes the Mem0 pgvector+Gemini deps (psycopg, google-genai) in at build time — no
+#     runtime PyPI install, so the venv deps survive `--force-recreate` / a fresh pull with
+#     zero boot-time dependency on network reachability. Bump the base digest deliberately
+#     in the Dockerfile, rebuild, test, then commit (see vps/README.md).
 #   - entrypoint is OUR script (vps/mkos-entrypoint.sh -> /opt/data/mkos-entrypoint.sh):
-#     self-heals venv deps, asserts OUR model config, then launches the gateway.
+#     asserts OUR model config, then launches the gateway. Its venv-dep self-heal check is
+#     now a fast no-op (deps are baked in) — kept as belt-and-suspenders only.
 #   - webhook host/path + all secrets live in .env ONLY (see vps/.env.example). Never commit .env.
 #   - healthcheck probes the webhook server (:8443) so `docker ps` shows real liveness;
 #     active recovery on wedge is done by the host watchdog (vps/telegram-watchdog.sh).
@@ -11,7 +16,10 @@
 # Deploy dir MUST stay /docker/hermes-agent-bfcq so COMPOSE_PROJECT_NAME + volume names are unchanged.
 services:
   hermes-agent:
-    image: ghcr.io/hostinger/hvps-hermes-agent@sha256:8bf68cad92c236d6ed0760c1cc268449aad781922277c7d7c994b40ba16a9fd6
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mkos-hermes-agent-bfcq:2026-07-19
     entrypoint: ["/bin/zsh", "/opt/data/mkos-entrypoint.sh"]
     restart: unless-stopped
     ports:
