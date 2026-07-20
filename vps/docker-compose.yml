@@ -12,6 +12,11 @@
 #   - webhook host/path + all secrets live in .env ONLY (see vps/.env.example). Never commit .env.
 #   - healthcheck probes the webhook server (:8443) so `docker ps` shows real liveness;
 #     active recovery on wedge is done by the host watchdog (vps/telegram-watchdog.sh).
+#   - Syncthing (hermes-inbox folder, launched by mkos-entrypoint.sh) needs its sync port
+#     reachable from the iMac — published bound to the Tailscale IP ONLY (same pattern as
+#     Postgres/Mem0 REST in mem0-central), never to 0.0.0.0. Both peers use static
+#     tcp://<tailscale-ip>:22000 addresses (see each side's Syncthing config), not
+#     discovery/relay, so no other ports are needed.
 #
 # Deploy dir MUST stay /docker/hermes-agent-bfcq so COMPOSE_PROJECT_NAME + volume names are unchanged.
 services:
@@ -24,6 +29,7 @@ services:
     restart: unless-stopped
     ports:
       - "4860"
+      - "100.94.185.35:22000:22000/tcp"
     labels:
       - traefik.enable=true
       - traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${COMPOSE_PROJECT_NAME}.${TRAEFIK_HOST}`)

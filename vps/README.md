@@ -15,8 +15,8 @@ The Hostinger VPS is the **sole Telegram gateway** (webhook mode) and hosts **ce
 - `mkos-entrypoint.sh` → `/opt/data/mkos-entrypoint.sh` — checks the venv deps are present
   (normally a no-op, since the Dockerfile already baked them in; only does real work if
   something wiped them after the image build), **asserts our model config** each boot
-  (neutralizes the stock image's nexos.ai injection), hands off to the image entrypoint
-  which launches `hermes gateway run` in webhook mode.
+  (neutralizes the stock image's nexos.ai injection), **starts Syncthing** (see below),
+  hands off to the image entrypoint which launches `hermes gateway run` in webhook mode.
 - `webhook-keeper.sh` → `/opt/mkos-watchdog/` — 1-min cron; re-registers the webhook if a restart
   window drops it (deterministic registration; no flap-war since the gateway is webhook-mode).
 - `telegram-watchdog.sh` → `/opt/mkos-watchdog/` — 5-min cron; **behavioral** health (real
@@ -24,6 +24,38 @@ The Hostinger VPS is the **sole Telegram gateway** (webhook mode) and hosts **ce
   on a genuine wedge) + Telegram alerts. No more false-HEALTHY.
 - `mkos-watchdog.cron` → `/etc/cron.d/mkos-watchdog` — schedules the two above.
 - `.env.example` — copy to `/docker/hermes-agent-bfcq/.env` and fill. **Never commit the real `.env`.**
+
+## Syncthing (VPS → vault inbox bridge)
+Lets an agent turn (any profile, triggered from Telegram or elsewhere) drop a file under
+`/opt/data/Inbox/Hermes` and have it land in `Master 2.0/00-Inbox/` on the Mac/iMac for
+triage (e.g. a drafted contact note — see Constitution §6 contacts convention + the
+`vault-triage` skill). Folder ID `hermes-inbox`, already paired with the iMac since
+2026-07-12 (config/certs live on `./data/.local/share/syncthing`, i.e. the data volume —
+survives recreate). Both peers use **static Tailscale addresses**
+(`tcp://100.94.185.35:22000` / `tcp://100.123.130.92:22000`), not discovery/relay, so
+only that one port needs publishing (bound to the Tailscale IP, never `0.0.0.0`).
+The *process* isn't part of the data volume, though — `mkos-entrypoint.sh` launches it
+fresh (backgrounded, as the `hermes` user) on every boot.
+
+**Safety config (2026-07-19, after an incident — see Constitution changelog):** a stale
+Syncthing index (pre-dating the Phase 0 inbox repoint, apparently scoped to the whole
+vault root at some point) caused a wave of phantom delete attempts on reconnect. No real
+content was lost (verified: only `.DS_Store` files actually deleted; real vault content
+sits outside the `00-Inbox` folder root Syncthing is bound to and was never reachable),
+but never again by design:
+- **VPS folder type is `sendonly`** (config.xml, not version-controlled — lives on the data
+  volume) — the VPS only ever pushes its own new files; it can't apply or propagate a
+  delete based on remote state, no matter how stale its index gets.
+- **iMac folder has `ignoreDelete=true`** — the vault's inbox NEVER applies a remote-driven
+  delete, from any peer, ever. This also means a VPS-side cleanup (e.g. deleting a test
+  file) does NOT propagate — the inbox is now append-only from the VPS's perspective;
+  removing something from it is always a local/manual/triage action on the vault side.
+- If re-pairing from scratch or after another dormant period, wipe
+  `./data/.local/share/syncthing/index-v2` on the VPS before restarting the process, so
+  no stale index can resurface.
+
+**One-directional in practice today:** the vault side only watches for new files; nothing
+auto-files them into `Contacts/` yet — that's a manual or agent-assisted triage step.
 
 ## Deploy dir
 `/docker/hermes-agent-bfcq/` on the VPS (keep the dir name — `COMPOSE_PROJECT_NAME` + volume names
